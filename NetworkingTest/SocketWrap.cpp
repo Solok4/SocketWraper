@@ -4,6 +4,7 @@
 
 SocketWrap::SocketWrap()
 {
+	SocketWrap::Initalize();
 }
 
 
@@ -13,10 +14,7 @@ SocketWrap::~SocketWrap()
 
 void SocketWrap::Initalize()
 {
-}
-
-void SocketWrap::InitalizeWin()
-{
+#ifdef WIN32
 	int error = WSAStartup(MAKEWORD(2, 2), &this->_WsaData);
 	if (error != NO_ERROR)
 	{
@@ -24,15 +22,17 @@ void SocketWrap::InitalizeWin()
 		WSACleanup();
 		return;
 	}
+#endif // WIN
 }
 
-void SocketWrap::CreateSocketWin(const char* name, int proto)
+
+void SocketWrap::CreateSocket(const char* name, int proto)
 {
 	std::shared_ptr<MySocket> mySocket(new MySocket);
 	SOCKET soc;
 	if (proto == IPPROTO_TCP)
 		soc = socket(AF_INET, SOCK_STREAM, proto);
-	else if (proto == IPPROTO_UDP)
+	else// if (proto == IPPROTO_UDP)
 		soc = socket(AF_INET, SOCK_DGRAM, proto);
 	if (soc == INVALID_SOCKET)
 	{
@@ -41,15 +41,16 @@ void SocketWrap::CreateSocketWin(const char* name, int proto)
 	}
 	mySocket->name = name;
 	mySocket->soc = soc;
-	mySocket->First.sin_family = AF_INET;
+	mySocket->MainSocket.sin_family = AF_INET;
+	mySocket->RecieveSocket.sin_family = AF_INET;
 	if (proto == IPPROTO_UDP)
 	{
-		mySocket->First.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
+		mySocket->RecieveSocket.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
 	}
 	_Sockets.push_back(mySocket);
 }
 
-void SocketWrap::ConnectionDataWin(const char* name,const char * ip, int port)
+void SocketWrap::ConnectionData(const char* name,const char * ip, int port)
 {
 	std::shared_ptr<MySocket> sock = SocketWrap::GetSocketByName(name);
 	if (sock == nullptr)
@@ -57,15 +58,14 @@ void SocketWrap::ConnectionDataWin(const char* name,const char * ip, int port)
 		Clog::PrintLog(LogTag::Error, "Socket with name of %s not found Error: %d",name,WSAGetLastError());
 		return;
 	}
-	if (sock->First.sin_addr.S_un.S_addr != htonl(INADDR_ANY))
+	if (sock->RecieveSocket.sin_addr.S_un.S_addr != htonl(INADDR_ANY))
 	{
-		sock->First.sin_addr.S_un.S_addr = inet_addr(ip);
+		sock->RecieveSocket.sin_addr.S_un.S_addr = inet_addr(ip);
 	}
-	sock->First.sin_port = htons(port);
+	sock->RecieveSocket.sin_port = htons(port);
 
-	sock->Second.sin_addr.S_un.S_addr = inet_addr(ip);
-	sock->Second.sin_port = htons(port);
-	sock->Second.sin_family = AF_INET;
+	sock->MainSocket.sin_addr.S_un.S_addr = inet_addr(ip);
+	sock->MainSocket.sin_port = htons(port);
 }
 
 std::shared_ptr<MySocket> SocketWrap::GetSocketByName(const char * name)
@@ -88,7 +88,7 @@ void SocketWrap::ConnectWin(const char * name)
 		Clog::PrintLog(LogTag::Error, "Socket with name of %s not found  Error: %d",  name,WSAGetLastError() );
 		return;
 	}
-	int result = connect(sock->soc, (struct sockaddr*)&sock->First, sizeof(sock->First));
+	int result = connect(sock->soc, (struct sockaddr*)&sock->MainSocket, sizeof(sock->MainSocket));
 	if (result == SOCKET_ERROR)
 	{
 		Clog::PrintLog(LogTag::Error, "Failed to connect with socket named %s - Error: %d", name,WSAGetLastError());
@@ -96,7 +96,7 @@ void SocketWrap::ConnectWin(const char * name)
 	}
 }
 
-void SocketWrap::CloseConnectionWin(const char * name)
+void SocketWrap::CloseConnection(const char * name)
 {
 	std::shared_ptr<MySocket> sock = SocketWrap::GetSocketByName(name);
 	if (sock == nullptr)
@@ -112,7 +112,7 @@ void SocketWrap::CloseConnectionWin(const char * name)
 	}
 }
 
-int SocketWrap::SendTCPWin(const char * name,const char * sendBuff)
+int SocketWrap::SendTCP(const char * name,const char * sendBuff)
 {
 	std::shared_ptr<MySocket> sock = SocketWrap::GetSocketByName(name);
 	if (sock == nullptr)
@@ -130,7 +130,117 @@ int SocketWrap::SendTCPWin(const char * name,const char * sendBuff)
 	return result;
 }
 
-int SocketWrap::RecvTCPWin(const char * name, char * recvBuff)
+int SocketWrap::SendTCP(int soc, const char* sendBuff)
+{
+	int result = send(soc, sendBuff, (int)strlen(sendBuff), 0);
+	if (result == SOCKET_ERROR)
+	{
+		Clog::PrintLog(LogTag::Error, "Failed to send with socket num %d Error: %d", soc, WSAGetLastError());
+		return -1;
+	}
+	printf("%d bytes sent\n", result);
+	return result;
+}
+
+void SocketWrap::CreateListeningClient(const char* SocketName,const char* ThreadName, IPPROTO type)
+{
+	std::shared_ptr<ThreadSocket> ThrSock(new ThreadSocket);
+	for (auto x : _ThreadSockets)
+	{
+		if (strcmp(x->name, ThreadName) == 0)
+		{
+			Clog::PrintLog(LogTag::Error, "Thread named %s already exists", ThreadName);
+			return;
+		}
+	}
+	ThrSock->name = ThreadName;
+	std::shared_ptr<MySocket> MySock = SocketWrap::GetSocketByName(SocketName);
+	if (MySock == nullptr)
+	{
+		Clog::PrintLog(LogTag::Error, "Socket with name of %s not found", SocketName);
+		return;
+	}
+	ThrSock->Socket = MySock;
+	ThrSock->thr = std::thread(&SocketWrap::ListenClient, this, ThrSock->Socket, type);
+	_ThreadSockets.push_back(ThrSock);
+
+	
+}
+
+void SocketWrap::ListenClient(std::shared_ptr<MySocket> sock,IPPROTO type)
+{
+	fd_set readfds;
+	SOCKET activity;
+	timeval tv;
+	tv.tv_sec = 1;
+	tv.tv_usec = 0;
+	int Length;
+	char Buffer[8192];
+
+	while (sock->Close.load() == false)
+	{
+		FD_ZERO(&readfds);
+		FD_SET(sock->soc, &readfds);
+
+		activity = select(sock->soc, &readfds, NULL, NULL, &tv);
+		if (activity < 0)
+		{
+			Clog::PrintLog(LogTag::Error, "Activity error");
+		}
+		if (FD_ISSET(sock->soc, &readfds))
+		{
+			if (type == IPPROTO_TCP)
+			{
+				Length = recv(sock->soc, Buffer, sizeof(Buffer), 0);
+				if (Length > 0)
+				{
+					//Data Recieved
+					sock->ResponseFunction(sock->soc, Buffer, Length);
+				}
+				else if (Length == 0)
+				{
+					//Conection closed
+					Clog::PrintLog(Log, "Connection closed");
+					sock->Close.store(true);
+					SocketWrap::CloseConnection(sock->name);
+				}
+				else
+				{
+					//Handle Error
+					Clog::PrintLog(LogTag::Error, "Failed recieving data in client listening func Error: %d",WSAGetLastError());
+					sock->Close.store(true);
+				}
+				
+			}
+			else if (type == IPPROTO_UDP)
+			{
+				int FromLen = sizeof(sock->RecieveSocket);
+				Length = recvfrom(sock->soc, Buffer, sizeof(Buffer), 0,(sockaddr*)&sock->RecieveSocket,&FromLen);
+				Clog::PrintLog(LogTag::Log, "Length: %d", Length);
+				if (Length > 0)
+				{
+					//Data Recieved
+					sock->ResponseFunction(sock->soc, Buffer, Length);
+
+				}
+				else if (Length == 0)
+				{
+					//Conection closed
+					sock->Close.store(true);
+				}
+				else
+				{
+					//Handle Error
+					Clog::PrintLog(LogTag::Error, "Failed recieving data in client listening func Error: %d", WSAGetLastError());
+					sock->Close.store(true);
+				}
+			}
+		}
+	}
+}
+
+
+int SocketWrap::RecvTCPServer(const char * name, int index, char * recvBuff)
 {
 	std::shared_ptr<MySocket> sock = SocketWrap::GetSocketByName(name);
 	if (sock == nullptr)
@@ -138,23 +248,17 @@ int SocketWrap::RecvTCPWin(const char * name, char * recvBuff)
 		Clog::PrintLog(LogTag::Error, "Socket with name of %s not found Error: %d", name, WSAGetLastError());
 		return -1;
 	}
-
-	int result = recv(sock->soc,recvBuff,(int)strlen(recvBuff),0);
+	int result = recv(sock->ChildSockets[index].soc,recvBuff,(int)strlen(recvBuff),0);
 	if (result == SOCKET_ERROR)
 	{
 		Clog::PrintLog(LogTag::Error, "Failed to recieve with socket named %s Error: %d", name, WSAGetLastError());
 		return -1;
 	}
-	else if (result == 0)
-	{
-		Clog::PrintLog(LogTag::Log, "Connection closed");
-	}
 	printf("%d bytes recieved\n", result);
 	return result;
 }
 
-
-int SocketWrap::RecvTCPServerWin(const char * name, int index, char * recvBuff)
+int SocketWrap::SendUDP(const char * name, const char * sendBuff)
 {
 	std::shared_ptr<MySocket> sock = SocketWrap::GetSocketByName(name);
 	if (sock == nullptr)
@@ -162,26 +266,8 @@ int SocketWrap::RecvTCPServerWin(const char * name, int index, char * recvBuff)
 		Clog::PrintLog(LogTag::Error, "Socket with name of %s not found Error: %d", name, WSAGetLastError());
 		return -1;
 	}
-	int result = recv(sock->ChildSockets[index],recvBuff,(int)strlen(recvBuff),0);
-	if (result == SOCKET_ERROR)
-	{
-		Clog::PrintLog(LogTag::Error, "Failed to recieve with socket named %s Error: %d", name, WSAGetLastError());
-		return -1;
-	}
-	printf("%d bytes recieved\n", result);
-	return result;
-}
-
-int SocketWrap::SendUDPWin(const char * name, const char * sendBuff)
-{
-	std::shared_ptr<MySocket> sock = SocketWrap::GetSocketByName(name);
-	if (sock == nullptr)
-	{
-		Clog::PrintLog(LogTag::Error, "Socket with name of %s not found Error: %d", name, WSAGetLastError());
-		return -1;
-	}
-	int fromlen = sizeof(sock->Second);
-	int result = sendto(sock->soc, sendBuff, strlen(sendBuff), 0, (sockaddr*)&sock->Second, fromlen);
+	int fromlen = sizeof(sock->MainSocket);
+	int result = sendto(sock->soc, sendBuff, strlen(sendBuff), 0, (sockaddr*)&sock->MainSocket, fromlen);
 	if (result == SOCKET_ERROR)
 	{
 		Clog::PrintLog(LogTag::Error, "Failed to send with socket named %s Error: %d", name, WSAGetLastError());
@@ -191,26 +277,7 @@ int SocketWrap::SendUDPWin(const char * name, const char * sendBuff)
 	return result;
 }
 
-int SocketWrap::RecvUDPWin(const char * name, char * recvBuff)
-{
-	std::shared_ptr<MySocket> sock = SocketWrap::GetSocketByName(name);
-	if (sock == nullptr)
-	{
-		Clog::PrintLog(LogTag::Error, "Socket with name of %s not found Error: %d", name, WSAGetLastError());
-		return -1;
-	}
-	int fromLen = sizeof(sock->First);
-	int result = recvfrom(sock->soc, recvBuff, strlen(recvBuff), 0, (sockaddr*)&sock->First, &fromLen);
-	if (result == SOCKET_ERROR)
-	{
-		Clog::PrintLog(LogTag::Error, "Failed to recieve with socket named %s Error: %d", name, WSAGetLastError());
-		return -1;
-	}
-	printf("%d bytes recieved\n", result);
-	return result;
-}
-
-void SocketWrap::CloseSocketWin(const char * name)
+void SocketWrap::CloseSocket(const char * name)
 {
 	std::shared_ptr<MySocket> sock = SocketWrap::GetSocketByName(name);
 	if (sock == nullptr)
@@ -226,7 +293,7 @@ void SocketWrap::CloseSocketWin(const char * name)
 	}
 }
 
-void SocketWrap::ShutdownWin()
+void SocketWrap::Shutdown()
 {
 	for (auto x : _Sockets)
 	{
@@ -235,7 +302,7 @@ void SocketWrap::ShutdownWin()
 	WSACleanup();
 }
 
-void SocketWrap::BindSocketWin(const char * name)
+void SocketWrap::BindSocket(const char * name)
 {
 	std::shared_ptr<MySocket> sock = SocketWrap::GetSocketByName(name);
 	if (sock == nullptr)
@@ -243,7 +310,7 @@ void SocketWrap::BindSocketWin(const char * name)
 		Clog::PrintLog(LogTag::Error, "Socket with name of %s not found Error: %d", name, WSAGetLastError());
 		return;
 	}
-	int result = bind(sock->soc, (struct sockaddr*)&sock->First, sizeof(sock->First));
+	int result = bind(sock->soc, (struct sockaddr*)&sock->MainSocket, sizeof(sock->MainSocket));
 	if (result == SOCKET_ERROR)
 	{
 		Clog::PrintLog(LogTag::Error, "Failed to bind socket named %s Error: %d", name, WSAGetLastError());
@@ -252,7 +319,7 @@ void SocketWrap::BindSocketWin(const char * name)
 }
 
 
-void SocketWrap::BindListeningFunctionWin(const char * name, std::function<void()> fun)
+void SocketWrap::BindSocketFunction(const char * name,SocketFunctionTypes type, std::function<void(int,char*, int)> fun)
 {
 	std::shared_ptr<MySocket> sock = SocketWrap::GetSocketByName(name);
 	if (sock == nullptr)
@@ -260,20 +327,31 @@ void SocketWrap::BindListeningFunctionWin(const char * name, std::function<void(
 		Clog::PrintLog(LogTag::Error, "Socket with name of %s not found Error: %d", name, WSAGetLastError());
 		return;
 	}
-	sock->fun = fun;
+	switch (type)
+	{
+	case Welcome:
+		sock->WelcomeFunction = fun;
+		break;
+	case Response:
+		sock->ResponseFunction = fun;
+		break;
+	default:
+		break;
+	}
+	
 }
 
-void SocketWrap::ListenSocketWin(std::shared_ptr<MySocket> sock, int numberOfClients)
+void SocketWrap::ListenServer(std::shared_ptr<MySocket> sock, int numberOfClients)
 {
 	fd_set readfds;
 	SOCKET maxSd=INVALID_SOCKET, sd = INVALID_SOCKET, activity,newSock= INVALID_SOCKET;
-	int addrLen = sizeof(sock->First);
-	char Buffer[1024];
+	int addrLen = sizeof(sock->MainSocket);
+	char Buffer[8192];
 	timeval tv;
 	tv.tv_sec = 1;
 	for (int i = 0; i < (sizeof(sock->ChildSockets) / sizeof(sock->ChildSockets[0])); i++)
 	{
-		sock->ChildSockets[i] = 0;
+		sock->ChildSockets[i].soc = 0;
 	}
 	if (listen(sock->soc, numberOfClients) == SOCKET_ERROR)
 	{
@@ -287,7 +365,7 @@ void SocketWrap::ListenSocketWin(std::shared_ptr<MySocket> sock, int numberOfCli
 		maxSd = sock->soc;
 		for (int i = 0; i < (sizeof(sock->ChildSockets) / sizeof(sock->ChildSockets[0])); i++)
 		{
-			sd = sock->ChildSockets[i];
+			sd = sock->ChildSockets[i].soc;
 			if (sd > 0)
 				FD_SET(sd, &readfds);
 			if (sd > maxSd)
@@ -309,16 +387,19 @@ void SocketWrap::ListenSocketWin(std::shared_ptr<MySocket> sock, int numberOfCli
 			}
 
 			// Welcome message
-			if (send(newSock, "Hallo\n", strlen("Hallo\n"), 0)!=strlen("Hallo\n"))
+			/*if (send(newSock, "Hallo\n", strlen("Hallo\n"), 0)!=strlen("Hallo\n"))
 			{
 				Clog::PrintLog(LogTag::Error, "Failed to send a message to socket %s Error: %d", sock->name,WSAGetLastError());
-			}
+			}*/
+			sock->WelcomeFunction(newSock, nullptr, 0);
 
 			for (int i = 0; i < (sizeof(sock->ChildSockets) / sizeof(sock->ChildSockets[0])); i++)
 			{
-				if (sock->ChildSockets[i] == 0)
+				if (sock->ChildSockets[i].soc == 0)
 				{
-					sock->ChildSockets[i] = newSock;
+					sock->ChildSockets[i].soc = newSock;
+					int AddressSize = sizeof(sock->ChildSockets[i].AdressInfo);
+					getpeername(sock->ChildSockets[i].soc,(sockaddr*)&sock->ChildSockets[i].AdressInfo,&AddressSize);
 					break;
 				}
 			}
@@ -328,44 +409,30 @@ void SocketWrap::ListenSocketWin(std::shared_ptr<MySocket> sock, int numberOfCli
 		{
 			for (int i = 0; i < (sizeof(sock->ChildSockets) / sizeof(sock->ChildSockets[0])); i++)
 			{
-				sd = sock->ChildSockets[i];
+				sd = sock->ChildSockets[i].soc;
 				if (FD_ISSET(sd, &readfds))
 				{
 					int valread;
 					if ((valread = recv(sd, Buffer, sizeof(Buffer) / sizeof(Buffer[0]), 0))==0)
 					{
 						//Ending connection prompt
-						int AdressSize = sizeof(sock->Second);
-						getpeername(sd, (sockaddr*)&sock->Second, &AdressSize);
-						Clog::PrintLog(LogTag::Log, "Host disconected. IP: %s\n", inet_ntoa(sock->Second.sin_addr));
+						Clog::PrintLog(LogTag::Log, "Host disconected. IP: %s\n", inet_ntoa(sock->ChildSockets[i].AdressInfo.sin_addr));
 						closesocket(sd);
-						sock->ChildSockets[i] = 0;
+						sock->ChildSockets[i].soc = 0;
 					}
 					else if(valread>0)
 					{
 						//Process recieved data
-						Clog::PrintLog(LogTag::Log, "[Server]: %.*s", valread, Buffer);
-						int sentLength = send(sd, Buffer, valread, 0);
-						if (sentLength != valread)
-						{
-							Clog::PrintLog(LogTag::Error, "Failed to send an echo message");
-						}
+						sock->ResponseFunction(sd, Buffer, valread);					
 					}
 				}
 			}
 		}
-		/*sock->ClientSocket = accept(sock->soc, NULL, NULL);
-		if (sock->ClientSocket == INVALID_SOCKET)
-		{
-			Clog::PrintLog(LogTag::Error, "Failed to accept a socket. Error: %d", WSAGetLastError());
-			return;
-		}
-		sock->fun();*/
 	}
 	printf("Ending thread");
 }
 
-void SocketWrap::CreateListeningThread(const char * ThreadName, const char * SocketName)
+void SocketWrap::CreateListeningServerThread(const char * ThreadName, const char * SocketName)
 {
 	std::shared_ptr<ThreadSocket> ThrSock(new ThreadSocket);
 	for (auto x : _ThreadSockets)
@@ -384,7 +451,7 @@ void SocketWrap::CreateListeningThread(const char * ThreadName, const char * Soc
 		return;
 	}
 	ThrSock->Socket = MySock;
-	ThrSock->thr = std::thread(&SocketWrap::ListenSocketWin,this,ThrSock->Socket,16);
+	ThrSock->thr = std::thread(&SocketWrap::ListenServer,this,ThrSock->Socket,1);
 	_ThreadSockets.push_back(ThrSock);
 }
 

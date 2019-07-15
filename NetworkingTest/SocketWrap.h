@@ -12,14 +12,21 @@
 #include <future>
 
 #ifdef _WIN32
+struct SocketCombo
+{
+	SOCKET soc;
+	sockaddr_in AdressInfo;
+};
+
 struct MySocket
 {
 	SOCKET soc;
 	const char* name;
-	sockaddr_in First,Second;
-	std::function<void()> fun = []() {};
+	sockaddr_in MainSocket,RecieveSocket;
+	std::function<void(int, char*, int)> ResponseFunction = [](int, char*, int) {};
+	std::function<void(int, char*, int)> WelcomeFunction = [](int, char*, int) {};
 	std::atomic<bool> Close = false;
-	SOCKET ChildSockets[8];
+	SocketCombo ChildSockets[8];
 };
 
 struct ThreadSocket
@@ -30,6 +37,12 @@ struct ThreadSocket
 };
 #endif
 
+enum SocketFunctionTypes
+{
+	Welcome = 0,
+	Response
+};
+
 class SocketWrap
 {
 public:
@@ -37,28 +50,28 @@ public:
 	~SocketWrap();
 	void Initalize();
 	// WINDOWS
-	void InitalizeWin();
-	void CreateSocketWin(const char* name, int proto);
-	void ConnectionDataWin(const char* name, const char* ip, int port);
+	void CreateSocket(const char* name, int proto);
+	void ConnectionData(const char* name, const char* ip, int port);
 	std::shared_ptr<MySocket> GetSocketByName(const char* name);
 	//CLIENT
 	void ConnectWin(const char* name);
-	void CloseConnectionWin(const char*name);
-	int SendTCPWin(const char* name,const char* sendBuff);
-	int RecvTCPWin(const char* name, char* recvBuff);
-	int RecvTCPServerWin(const char* name,int index, char* recvBuff);
-	int SendUDPWin(const char* name, const char* sendBuff);
-	int RecvUDPWin(const char* name, char* recvBuff);
+	void CloseConnection(const char*name);
+	int SendTCP(const char* name,const char* sendBuff);
+	int SendTCP(int soc, const char* sendBuff);
+	void CreateListeningClient(const char* SocketName,const char* ThreadName,IPPROTO type);
+	void ListenClient(std::shared_ptr<MySocket> sock,IPPROTO type);
+	int RecvTCPServer(const char* name,int index, char* recvBuff);
+	int SendUDP(const char* name, const char* sendBuff);
 	//SERVER
-	void BindSocketWin(const char* name);
-	void BindListeningFunctionWin(const char* name, std::function<void()> fun);
-	void ListenSocketWin(std::shared_ptr<MySocket> sock, int numberOfClients);
+	void BindSocket(const char* name);
+	void BindSocketFunction(const char* name,SocketFunctionTypes type, std::function<void(int,char*, int)> fun);
+	void ListenServer(std::shared_ptr<MySocket> sock, int numberOfClients);
 
-	void CreateListeningThread(const char* ThreadName, const char* SocketName);
+	void CreateListeningServerThread(const char* ThreadName, const char* SocketName);
 	void StopThread(const char* ThreadName);
 
-	void CloseSocketWin(const char* name);
-	void ShutdownWin();
+	void CloseSocket(const char* name);
+	void Shutdown();
 
 
 
