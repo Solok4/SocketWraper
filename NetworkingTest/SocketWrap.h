@@ -65,6 +65,7 @@ class SocketInstance
 public:
 	SocketInstance() : _Soc(0), _Name("")
 	{
+		_Address = nullptr;
 		_Status = SocketStatus::Created;
 		_SocType = Unspec;
 		this->_Reference = nullptr;
@@ -73,6 +74,7 @@ public:
 	};
 	SocketInstance(const char* Name, SocketWrap* ref) :_Soc(0), _Name(Name), _Reference(ref)
 	{
+		_Address = nullptr;
 		_Status = SocketStatus::Created;
 		_SocType = Unspec;
 		this->WelcomeFunction = [](int, char*, int) {};
@@ -80,6 +82,7 @@ public:
 	};
 	SocketInstance(const char* Name, int socket,SocketWrap* ref) :_Soc(socket), _Name(Name), _Reference(ref)
 	{
+		_Address = nullptr;
 		_Status = SocketStatus::Created;
 		_SocType = Unspec;
 		this->WelcomeFunction = [](int,char*,int) {};
@@ -93,8 +96,9 @@ public:
 	//Client things
 	void SetupClient(const char* addr,const char* port);
 	void ConnectToServer();
-
-	void SendTCP(const char* data, size_t size);
+	void SendTCPClient(void* data, size_t size);
+	void RecieveTCPClient(void* dataBuffer, size_t bufferSize);
+	void CreateRecieveThread();
 
 
 	//Universal
@@ -104,10 +108,11 @@ public:
 	void SetStatus(SocketStatus stat);
 	void BindSocketFunction(std::function<void(int, char*, int)> func, SocketFunctionTypes type);
 	void StopListeningThread();
+	void CloseConnection();
 
 
 private:
-
+	void RecieveFunc();
 	void ListenServerFunc(int maxClients);
 
 	SocketWrap* _Reference;
@@ -115,7 +120,7 @@ private:
 	std::vector<std::shared_ptr<SocketInstance>> ServerSockets;
 	SOCKET _Soc;
 	const char* _Name;
-	struct addrinfo* _Addres;
+	struct addrinfo* _Address;
 	SocketStatus _Status;
 	SocketType _SocType;
 	std::function<void(int, char*, int)> WelcomeFunction;
@@ -129,7 +134,7 @@ public:
 	SocketWrap();
 	~SocketWrap();
 
-	std::shared_ptr<SocketInstance> CreateSocket(const char* name, int proto);
+	std::shared_ptr<SocketInstance> CreateSocket(const char* name, IPPROTO proto);
 	std::shared_ptr<SocketInstance> CreateEmptySocket(const char* name);
 	std::shared_ptr<SocketInstance> GetSocketByName(const char* name);
 	void CloseSocket(const char* name);

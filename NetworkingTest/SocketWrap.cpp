@@ -4,6 +4,10 @@
 
 SocketInstance::~SocketInstance()
 {
+	if (this->_Address != nullptr)
+	{
+		//freeaddrinfo(this->_Address);
+	}
 	if (this->_Soc != INVALID_SOCKET)
 	{
 		closesocket(this->_Soc);
@@ -21,7 +25,7 @@ void SocketInstance::SetupServer(const char* port)
 		hints.ai_flags = AI_PASSIVE;
 		if ((status = getaddrinfo(NULL, port, &hints, &res) != 0))
 		{
-			Clog::PrintLog(LogTag::Error, "GetAddrInfo error:%s", gai_strerror(status));
+			Clog::PrintLog(LogTag::Error, "%s > GetAddrInfo error:%s",this->_Name, gai_strerror(status));
 			return;
 		}
 		else
@@ -33,24 +37,23 @@ void SocketInstance::SetupServer(const char* port)
 				struct sockaddr_in* socka = (struct sockaddr_in*)p->ai_addr;
 				addr = &(socka->sin_addr);
 				inet_ntop(p->ai_family, addr, ipstr, sizeof(ipstr));
-				Clog::PrintLog(LogTag::Log, "%s", ipstr);
+				//Clog::PrintLog(LogTag::Log, "%s", ipstr);
 			}
-			this->_Addres = res;
-			this->_Addres->ai_protocol = IPPROTO_TCP;
+			this->_Address = res;
+			this->_Address->ai_protocol = IPPROTO_TCP;
 			this->_Status = SocketStatus::HasAddresInfo;
 		}
 		if (this->_Status == SocketStatus::HasAddresInfo && this->_SocType == SocketType::Server)
 		{
-			if (status = bind(this->_Soc, this->_Addres->ai_addr, sizeof(this->_Addres->ai_addrlen)) != 0)
+			if (status = bind(this->_Soc, this->_Address->ai_addr, this->_Address->ai_addrlen) != 0)
 			{
-				Clog::PrintLog(LogTag::Error, "Server bind error %s: %d", this->_Name,WSAGetLastError());
+				Clog::PrintLog(LogTag::Error, "%s > Server bind error: %d", this->_Name,WSAGetLastError());
 				return;
 			}
 			else
 			{
-				Clog::PrintLog(LogTag::Error, "Server has been binded %s", this->_Name);
+				Clog::PrintLog(LogTag::Log, "%s > Server has been binded", this->_Name);
 				this->_Status = SocketStatus::Binded;
-				freeaddrinfo(res);
 			}
 
 		}
@@ -59,9 +62,78 @@ void SocketInstance::SetupServer(const char* port)
 
 void SocketInstance::CreateListeningThread(int maxClients)
 {
-	if(this->ListeningThread.native_handle() == NULL)
+	if(this->ListeningThread.native_handle() == NULL && this->_SocType == SocketType::Server)
 	this->ListeningThread = std::thread(&SocketInstance::ListenServerFunc, this, maxClients);
-	this->ListeningThread.join();
+}
+
+void SocketInstance::RecieveFunc()
+{
+	fd_set readfds;
+	SOCKET activity;
+	timeval tv;
+	tv.tv_sec = 1;
+	tv.tv_usec = 0;
+	int Length;
+	char Buffer[8192];
+
+	while (this->isListening.load() == true)
+	{
+		FD_ZERO(&readfds);
+		FD_SET(this->_Soc, &readfds);
+
+		activity = select(this->_Soc, &readfds, NULL, NULL, &tv);
+		if (activity < 0)
+		{
+			Clog::PrintLog(LogTag::Error, "%s > Activity error",this->_Name);
+		}
+		if (FD_ISSET(this->_Soc, &readfds))
+		{
+			if (this->_Address->ai_protocol == IPPROTO_TCP)
+			{
+			Length = recv(this->_Soc, Buffer, sizeof(Buffer), 0);
+			if (Length > 0)
+			{
+				//Data Recieved
+				this->ResponseFunction(this->_Soc, Buffer, Length);
+			}
+			else if (Length == 0)
+			{
+				//Conection closed
+				Clog::PrintLog(Log, "%s > Connection closed",this->_Name);
+				this->isListening.store(true);
+				//SocketWrap::CloseConnection(sock->name);
+			}
+			else
+			{
+				//Handle Error
+				Clog::PrintLog(LogTag::Error, "%s > Failed recieving data in client listening func Error: %d",this->_Name,WSAGetLastError());
+				this->isListening.store(true);
+			}			
+		}
+		else if (this->_Address->ai_protocol == IPPROTO_UDP)
+		{
+			int FromLen = this->_Address->ai_addrlen;
+			Length = recvfrom(this->_Soc, Buffer, sizeof(Buffer), 0,this->_Address->ai_addr,&FromLen);
+			Clog::PrintLog(LogTag::Log, "Length: %d", Length);
+			if (Length > 0)
+			{
+				//Data Recieved
+				this->ResponseFunction(this->_Soc, Buffer, Length);
+			}
+			else if (Length == 0)
+			{
+				//Conection closed
+				this->isListening.store(true);
+			}
+			else
+			{
+				//Handle Error
+				Clog::PrintLog(LogTag::Error, "%s > Failed recieving data in client listening func Error: %d",this->_Name, WSAGetLastError());
+				this->isListening.store(true);
+			}
+		}
+	}
+	}
 }
 
 void SocketInstance::ListenServerFunc(int maxClients)
@@ -70,7 +142,7 @@ void SocketInstance::ListenServerFunc(int maxClients)
 	{
 		fd_set readfds;
 		SOCKET maxSd = INVALID_SOCKET, sd = INVALID_SOCKET, activity, newSock = INVALID_SOCKET;
-		int addrLen = sizeof(this->_Addres);
+		int addrLen = sizeof(this->_Address);
 		char Buffer[8192];
 		timeval tv;
 		tv.tv_sec = 1;
@@ -87,11 +159,19 @@ void SocketInstance::ListenServerFunc(int maxClients)
 		}
 		if (listen(this->_Soc, maxClients) == SOCKET_ERROR)
 		{
-			Clog::PrintLog(LogTag::Error, "Socket named %s failed to listen Error: %d", this->_Soc, WSAGetLastError());
+			Clog::PrintLog(LogTag::Error, "%s > Socket failed to listen Error: %d", this->_Soc, WSAGetLastError());
 			return;
 		}
+
+		void* addr;
+		char ipstr[INET_ADDRSTRLEN];
+		struct sockaddr_in* socka = (struct sockaddr_in*)this->_Address->ai_addr;
+		addr = &(socka->sin_addr);
+		inet_ntop(this->_Address->ai_family, addr, ipstr, sizeof(ipstr));
+
+		Clog::PrintLog(LogTag::Log, "%s > Server listening at %s",this->_Name, ipstr);
 		this->isListening = true;
-		while (this->isListening.load() == false)
+		while (this->isListening.load() == true)
 		{
 			FD_ZERO(&readfds);
 			FD_SET(this->_Soc, &readfds);
@@ -108,14 +188,14 @@ void SocketInstance::ListenServerFunc(int maxClients)
 			activity = select(maxSd + 1, &readfds, NULL, NULL, &tv);
 			if (activity < 0)
 			{
-				Clog::PrintLog(LogTag::Error, "Activity error");
+				Clog::PrintLog(LogTag::Error, "%s > Activity error",this->_Name);
 			}
 			if (FD_ISSET(this->_Soc, &readfds))
 			{
-				Clog::PrintLog(LogTag::Log, "New connection");
+				Clog::PrintLog(LogTag::Log, "%s > New connection",this->_Name);
 				if ((newSock = accept(this->_Soc, NULL, NULL)) < 0)
 				{
-					Clog::PrintLog(LogTag::Error, "Failed to accept with socket %s Error: %d\n", this->_Name, WSAGetLastError());
+					Clog::PrintLog(LogTag::Error, "%s > Failed to accept Error: %d\n", this->_Name, WSAGetLastError());
 					return;
 				}
 
@@ -125,14 +205,15 @@ void SocketInstance::ListenServerFunc(int maxClients)
 					Clog::PrintLog(LogTag::Error, "Failed to send a message to socket %s Error: %d", sock->name,WSAGetLastError());
 				}*/
 				this->WelcomeFunction(newSock, nullptr, 0);
-
+				struct sockaddr_storage addr;
 				for (int i = 0; i < this->ServerSockets.size(); i++)
 				{
 					if (this->ServerSockets[i]->_Soc == 0)
 					{
 						this->ServerSockets[i]->_Soc = newSock;
-						int AddressSize = sizeof(this->ServerSockets[i]->_Addres);
-						getpeername(this->ServerSockets[i]->_Soc, (sockaddr*)& this->ServerSockets[i]->_Addres, &AddressSize);
+						int AddressSize = sizeof(addr);
+						getpeername(this->ServerSockets[i]->_Soc, (struct sockaddr*)&addr, &AddressSize);
+						this->_Address->ai_addr = (struct sockaddr*) &addr;
 						break;
 					}
 				}
@@ -151,10 +232,10 @@ void SocketInstance::ListenServerFunc(int maxClients)
 							//Ending connection prompt
 							void* addr;
 							char ipstr[INET_ADDRSTRLEN];
-							struct sockaddr_in* socka = (struct sockaddr_in*)this->_Addres->ai_addr;
+							struct sockaddr_in* socka = (struct sockaddr_in*)this->_Address->ai_addr;
 							addr = &(socka->sin_addr);
-							inet_ntop(this->_Addres->ai_family, addr, ipstr, sizeof(ipstr));
-							Clog::PrintLog(LogTag::Log, "Host disconected. IP: %s\n", ipstr);
+							inet_ntop(this->_Address->ai_family, addr, ipstr, sizeof(ipstr));
+							Clog::PrintLog(LogTag::Log, "%s > Host disconected. IP: %s\n",this->_Name, ipstr);
 							closesocket(sd);
 							this->ServerSockets[i]->_Soc = 0;
 						}
@@ -167,11 +248,15 @@ void SocketInstance::ListenServerFunc(int maxClients)
 				}
 			}
 		}
-		printf("Ending thread");
+		Clog::PrintLog(LogTag::Log, "%s > Stoping listening", this->_Name);
+		for (auto i : this->ServerSockets)
+		{
+
+		}
 	}
 	else
 	{
-		Clog::PrintLog(LogTag::Error, "Server %s is not prepared for listening", this->_Name);
+		Clog::PrintLog(LogTag::Error, "%s > Server is not prepared for listening", this->_Name);
 	}
 }
 
@@ -183,9 +268,10 @@ void SocketInstance::SetupClient(const char* addr, const char* port)
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_INET;
 	hints.ai_socktype = SOCK_STREAM;
+	this->_SocType = SocketType::Client;
 	if ((status = getaddrinfo(addr, port, &hints, &res) != 0))
 	{
-		Clog::PrintLog(LogTag::Error, "GetAddrInfo error:%s", gai_strerror(status));
+		Clog::PrintLog(LogTag::Error, "%s > GetAddrInfo error:%s",this->_Name, gai_strerror(status));
 			return;
 	}
 	else
@@ -195,10 +281,9 @@ void SocketInstance::SetupClient(const char* addr, const char* port)
 		struct sockaddr_in* socka = (struct sockaddr_in*)res->ai_addr;
 		addr = &(socka->sin_addr);
 		inet_ntop(res->ai_family, addr, ipstr, sizeof(ipstr));
-		Clog::PrintLog(LogTag::Log, "%s", ipstr);
-
-		this->_Addres = res;
-		freeaddrinfo(res);
+		//Clog::PrintLog(LogTag::Log, "%s", ipstr);
+		this->_Address = res;
+		this->_Status = SocketStatus::HasAddresInfo;
 	}
 }
 
@@ -206,24 +291,78 @@ void SocketInstance::ConnectToServer()
 {
 	if (this->_Status != SocketStatus::HasAddresInfo)
 	{
-		Clog::PrintLog(LogTag::Error, "You are alowed to connect to server after specifing its adress");
+		Clog::PrintLog(LogTag::Error, "%s > You are alowed to connect to server after specifing its adress",this->_Name);
 		return;
 	}
 	else
 	{
+
+		void* addr;
+		char ipstr[INET_ADDRSTRLEN];
+		struct sockaddr_in* socka = (struct sockaddr_in*)this->_Address->ai_addr;
+		addr = &(socka->sin_addr);
+		inet_ntop(this->_Address->ai_family, addr, ipstr, sizeof(ipstr));
+
 		int status;
-		void* addr = &this->_Addres->ai_addr;
-		char straddr[INET_ADDRSTRLEN];
-		inet_ntop(AF_INET, addr, straddr, sizeof(straddr));
-		if ((status = connect(this->_Soc, (struct sockaddr*) & this->_Addres, sizeof(this->_Addres))) != 0)
+		if ((status = connect(this->_Soc, this->_Address->ai_addr, this->_Address->ai_addrlen)) != 0)
 		{
-			Clog::PrintLog(LogTag::Error, "Failed to connect to server %s", straddr);
+			Clog::PrintLog(LogTag::Error, "%s > Failed to connect to server %s",this->_Name, ipstr);
 		}
 		else
 		{
-			Clog::PrintLog(LogTag::Log, "Connected to %s", straddr);
+			Clog::PrintLog(LogTag::Log, "%s > Connected to %s",this->_Name, ipstr);
 		}
 	}
+}
+
+void SocketInstance::SendTCPClient(void* data, size_t size)
+{
+	if (this->_Status == SocketStatus::Connected)
+	{
+		char* ptr = (char*)data;
+		size_t PartSize = 0;
+		while (0 < size)
+		{
+			PartSize = send(this->_Soc, ptr, size, NULL);
+			if (PartSize == SOCKET_ERROR)
+			{
+				Clog::PrintLog(LogTag::Error, "%s > Failed to send data", this->_Name);
+				return;
+			}
+			ptr += PartSize;
+			size -= PartSize;
+		}
+		Clog::PrintLog(LogTag::Log, "%s > Sent %d bytes", size, this->_Name);
+	}
+	else
+	{
+		Clog::PrintLog(LogTag::Error, "%s > You have to connect to server first.",this->_Name);
+		return;
+	}
+}
+
+void SocketInstance::RecieveTCPClient(void* dataBuffer, size_t bufferSize)
+{
+	int recievedBytes = recv(this->_Soc, (char*)dataBuffer, bufferSize, NULL);
+	if (recievedBytes > 0)
+	{
+		Clog::PrintLog(LogTag::Log, "%s > Recieved %d bytes.", recievedBytes, this->_Name);
+	}
+	else if (recievedBytes == 0)
+	{
+		Clog::PrintLog(LogTag::Log, "%s > Connection closed", this->_Name);
+		this->_Status = SocketStatus::HasAddresInfo;
+	}
+	else
+	{
+		Clog::PrintLog(LogTag::Error, "%s > Failed to recieve data", this->_Name);
+	}
+}
+
+void SocketInstance::CreateRecieveThread()
+{
+	if (this->ListeningThread.native_handle() == NULL && this->_SocType == SocketType::Client)
+		this->ListeningThread = std::thread(&SocketInstance::RecieveFunc, this);
 }
 
 const char* SocketInstance::GetName()
@@ -264,6 +403,17 @@ void SocketInstance::BindSocketFunction(std::function<void(int, char*, int)> fun
 void SocketInstance::StopListeningThread()
 {
 	this->isListening = false;
+	this->ListeningThread.join();
+}
+
+void SocketInstance::CloseConnection()
+{
+	int result;
+	if ((result = shutdown(this->_Soc, SD_SEND)) == SOCKET_ERROR)
+	{
+		Clog::PrintLog(LogTag::Error, "%s > Failed to close connection", this->_Name);
+	}
+	
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -291,7 +441,7 @@ SocketWrap::~SocketWrap()
 }
 
 
-std::shared_ptr<SocketInstance> SocketWrap::CreateSocket(const char* name, int proto)
+std::shared_ptr<SocketInstance> SocketWrap::CreateSocket(const char* name, IPPROTO proto)
 {
 	SOCKET soc;
 	if (proto == IPPROTO_TCP)
@@ -300,7 +450,7 @@ std::shared_ptr<SocketInstance> SocketWrap::CreateSocket(const char* name, int p
 		soc = socket(AF_INET, SOCK_DGRAM, proto);
 	if (soc == INVALID_SOCKET)
 	{
-		Clog::PrintLog(LogTag::Error, "Failed to create a socket. Error: %d",WSAGetLastError());
+		Clog::PrintLog(LogTag::Error, "%s > Failed to create a socket. Error: %d",name,WSAGetLastError());
 		return nullptr;
 	}
 	std::shared_ptr<SocketInstance> mySocket(new SocketInstance(name,soc,this));
