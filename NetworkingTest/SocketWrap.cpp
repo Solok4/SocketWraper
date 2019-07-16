@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "SocketWrap.h"
+#include <string>
 
 
 SocketInstance::~SocketInstance()
@@ -54,6 +55,7 @@ void SocketInstance::SetupServer(const char* port)
 			{
 				Clog::PrintLog(LogTag::Log, "%s > Server has been binded", this->_Name);
 				this->_Status = SocketStatus::Binded;
+				this->_Port = port;
 			}
 
 		}
@@ -75,8 +77,8 @@ void SocketInstance::RecieveFunc()
 	tv.tv_usec = 0;
 	int Length;
 	char Buffer[8192];
-
-	while (this->isListening.load() == true)
+	this->isListening = true;
+	while (this->isListening.load() == true && this->_Status == SocketStatus::Connected)
 	{
 		FD_ZERO(&readfds);
 		FD_SET(this->_Soc, &readfds);
@@ -90,50 +92,54 @@ void SocketInstance::RecieveFunc()
 		{
 			if (this->_Address->ai_protocol == IPPROTO_TCP)
 			{
-			Length = recv(this->_Soc, Buffer, sizeof(Buffer), 0);
-			if (Length > 0)
-			{
-				//Data Recieved
-				this->ResponseFunction(this->_Soc, Buffer, Length);
+				Length = recv(this->_Soc, Buffer, sizeof(Buffer), 0);
+				if (Length > 0)
+				{
+					//Data Recieved
+					this->ResponseFunction(std::make_shared<SocketInstance>(*this), Buffer, Length);
+				}
+				else if (Length == 0)
+				{
+					//Conection closed
+					Clog::PrintLog(Log, "%s > Connection closed",this->_Name);
+					this->isListening.store(false);
+					this->_Status = SocketStatus::HasAddresInfo;
+					this->CloseConnection();
+				}
+				else
+				{
+					//Handle Error
+					Clog::PrintLog(LogTag::Error, "%s > Failed recieving data in client listening func Error: %d",this->_Name,WSAGetLastError());
+					this->isListening.store(false);
+					this->_Status = SocketStatus::HasAddresInfo;
+					this->CloseConnection();
+				}			
 			}
-			else if (Length == 0)
+			else if (this->_Address->ai_protocol == IPPROTO_UDP)
 			{
-				//Conection closed
-				Clog::PrintLog(Log, "%s > Connection closed",this->_Name);
-				this->isListening.store(true);
-				//SocketWrap::CloseConnection(sock->name);
-			}
-			else
-			{
-				//Handle Error
-				Clog::PrintLog(LogTag::Error, "%s > Failed recieving data in client listening func Error: %d",this->_Name,WSAGetLastError());
-				this->isListening.store(true);
-			}			
-		}
-		else if (this->_Address->ai_protocol == IPPROTO_UDP)
-		{
-			int FromLen = this->_Address->ai_addrlen;
-			Length = recvfrom(this->_Soc, Buffer, sizeof(Buffer), 0,this->_Address->ai_addr,&FromLen);
-			Clog::PrintLog(LogTag::Log, "Length: %d", Length);
-			if (Length > 0)
-			{
-				//Data Recieved
-				this->ResponseFunction(this->_Soc, Buffer, Length);
-			}
-			else if (Length == 0)
-			{
-				//Conection closed
-				this->isListening.store(true);
-			}
-			else
-			{
-				//Handle Error
-				Clog::PrintLog(LogTag::Error, "%s > Failed recieving data in client listening func Error: %d",this->_Name, WSAGetLastError());
-				this->isListening.store(true);
+				int FromLen = this->_Address->ai_addrlen;
+				Length = recvfrom(this->_Soc, Buffer, sizeof(Buffer), 0,this->_Address->ai_addr,&FromLen);
+				Clog::PrintLog(LogTag::Log, "Length: %d", Length);
+				if (Length > 0)
+				{
+					//Data Recieved
+					this->ResponseFunction(std::make_shared<SocketInstance>(*this), Buffer, Length);
+				}
+				else if (Length == 0)
+				{
+					//Conection closed
+					this->isListening.store(false);
+				}
+				else
+				{
+					//Handle Error
+					Clog::PrintLog(LogTag::Error, "%s > Failed recieving data in client listening func Error: %d",this->_Name, WSAGetLastError());
+					this->isListening.store(false);
+				}
 			}
 		}
 	}
-	}
+	Clog::PrintLog(LogTag::Log, "Stopping recieving thread");
 }
 
 void SocketInstance::ListenServerFunc(int maxClients)
@@ -146,17 +152,24 @@ void SocketInstance::ListenServerFunc(int maxClients)
 		char Buffer[8192];
 		timeval tv;
 		tv.tv_sec = 1;
+
+		/*////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+		Need to be fixed
+		////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////*/
+		const char* MasterName = this->_Name;
+		std::string childname(this->_Name);
+		childname += " ";
 		for (int i = this->ServerSockets.size(); i < maxClients; i++)
 		{
-			char childname[32];
-			char number[4];
-			sprintf(number, "%d", i);
-			strcpy_s(childname, this->_Name);
-			strcat_s(childname, " ");
-			strcat_s(childname, number);
-			auto child = this->_Reference->CreateEmptySocket(childname);
+			std::string number = std::to_string(i);
+			std::string Final(childname.c_str());
+			Final += number;
+
+			auto child = this->_Reference->CreateEmptySocket(Final.c_str());
+			child->_SocType = SocketType::Client;
 			this->ServerSockets.push_back(child);
 		}
+		/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 		if (listen(this->_Soc, maxClients) == SOCKET_ERROR)
 		{
 			Clog::PrintLog(LogTag::Error, "%s > Socket failed to listen Error: %d", this->_Soc, WSAGetLastError());
@@ -204,16 +217,36 @@ void SocketInstance::ListenServerFunc(int maxClients)
 				{
 					Clog::PrintLog(LogTag::Error, "Failed to send a message to socket %s Error: %d", sock->name,WSAGetLastError());
 				}*/
-				this->WelcomeFunction(newSock, nullptr, 0);
-				struct sockaddr_storage addr;
+
+
 				for (int i = 0; i < this->ServerSockets.size(); i++)
 				{
 					if (this->ServerSockets[i]->_Soc == 0)
 					{
+						struct sockaddr addr;
+						struct addrinfo hints, * res;
+
 						this->ServerSockets[i]->_Soc = newSock;
 						int AddressSize = sizeof(addr);
 						getpeername(this->ServerSockets[i]->_Soc, (struct sockaddr*)&addr, &AddressSize);
-						this->_Address->ai_addr = (struct sockaddr*) &addr;
+
+						memset(&hints, 0, sizeof(hints));
+						hints.ai_family = AF_INET;
+						hints.ai_socktype = SOCK_STREAM;
+
+						void* addres;
+						char ipstr[INET_ADDRSTRLEN];
+						struct sockaddr_in* socka = (struct sockaddr_in*)&addr;
+						addres = &(socka->sin_addr);
+						inet_ntop(AF_INET, addres, ipstr, sizeof(ipstr));
+
+						getaddrinfo(ipstr, this->_Port, &hints, &res);
+
+						this->ServerSockets[i]->_Address = res;
+						this->ServerSockets[i]->_Address->ai_protocol = IPPROTO_TCP;
+						this->ServerSockets[i]->_Status = SocketStatus::Connected;
+						std::shared_ptr<SocketInstance> inst(this->ServerSockets[i]);
+						this->WelcomeFunction(inst, nullptr, 0);
 						break;
 					}
 				}
@@ -232,17 +265,19 @@ void SocketInstance::ListenServerFunc(int maxClients)
 							//Ending connection prompt
 							void* addr;
 							char ipstr[INET_ADDRSTRLEN];
-							struct sockaddr_in* socka = (struct sockaddr_in*)this->_Address->ai_addr;
+							struct sockaddr_in* socka = (struct sockaddr_in*)this->ServerSockets[i]->_Address->ai_addr;
 							addr = &(socka->sin_addr);
-							inet_ntop(this->_Address->ai_family, addr, ipstr, sizeof(ipstr));
+							inet_ntop(this->ServerSockets[i]->_Address->ai_family, addr, ipstr, sizeof(ipstr));
 							Clog::PrintLog(LogTag::Log, "%s > Host disconected. IP: %s\n",this->_Name, ipstr);
 							closesocket(sd);
 							this->ServerSockets[i]->_Soc = 0;
+							this->ServerSockets[i]->_Status = SocketStatus::Created;
 						}
 						else if (valread > 0)
 						{
 							//Process recieved data
-							this->ResponseFunction(sd, Buffer, valread);
+							std::shared_ptr<SocketInstance> inst(this->ServerSockets[i]);
+							this->ResponseFunction(inst, Buffer, valread);
 						}
 					}
 				}
@@ -283,6 +318,7 @@ void SocketInstance::SetupClient(const char* addr, const char* port)
 		inet_ntop(res->ai_family, addr, ipstr, sizeof(ipstr));
 		//Clog::PrintLog(LogTag::Log, "%s", ipstr);
 		this->_Address = res;
+		this->_Address->ai_protocol = IPPROTO_TCP;
 		this->_Status = SocketStatus::HasAddresInfo;
 	}
 }
@@ -320,8 +356,9 @@ void SocketInstance::SendTCPClient(void* data, size_t size)
 	if (this->_Status == SocketStatus::Connected)
 	{
 		char* ptr = (char*)data;
+		size_t length = size;
 		size_t PartSize = 0;
-		while (0 < size)
+		while (0 < length)
 		{
 			PartSize = send(this->_Soc, ptr, size, NULL);
 			if (PartSize == SOCKET_ERROR)
@@ -330,9 +367,9 @@ void SocketInstance::SendTCPClient(void* data, size_t size)
 				return;
 			}
 			ptr += PartSize;
-			size -= PartSize;
+			length -= PartSize;
 		}
-		Clog::PrintLog(LogTag::Log, "%s > Sent %d bytes", size, this->_Name);
+		Clog::PrintLog(LogTag::Log, "%s > Sent %d bytes", this->_Name, size);
 	}
 	else
 	{
@@ -385,7 +422,7 @@ void SocketInstance::SetStatus(SocketStatus stat)
 	this->_Status = stat;
 }
 
-void SocketInstance::BindSocketFunction(std::function<void(int, char*, int)> func, SocketFunctionTypes type)
+void SocketInstance::BindSocketFunction(std::function<void(std::shared_ptr<SocketInstance>, char*, int)> func, SocketFunctionTypes type)
 {
 	switch (type)
 	{
@@ -453,14 +490,14 @@ std::shared_ptr<SocketInstance> SocketWrap::CreateSocket(const char* name, IPPRO
 		Clog::PrintLog(LogTag::Error, "%s > Failed to create a socket. Error: %d",name,WSAGetLastError());
 		return nullptr;
 	}
-	std::shared_ptr<SocketInstance> mySocket(new SocketInstance(name,soc,this));
+	auto mySocket = std::make_shared<SocketInstance>(name,soc,this);
 	_Sockets.push_back(mySocket);
 	return mySocket;
 }
 
 std::shared_ptr<SocketInstance> SocketWrap::CreateEmptySocket(const char* name)
 {
-	std::shared_ptr<SocketInstance> mySocket(new SocketInstance(name,this));
+	auto mySocket = std::make_shared<SocketInstance>(name,this);
 	_Sockets.push_back(mySocket);
 	return mySocket;
 }

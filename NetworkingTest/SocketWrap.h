@@ -63,30 +63,53 @@ class SocketWrap;
 class SocketInstance
 {
 public:
-	SocketInstance() : _Soc(0), _Name("")
+	SocketInstance()
 	{
-		_Address = nullptr;
-		_Status = SocketStatus::Created;
-		_SocType = Unspec;
+		this->_Name = "";
+		this->_Soc = 0;
+		this->_Port = nullptr;
+		this->_Address = nullptr;
+		this->_Status = SocketStatus::Created;
+		this->_SocType = Unspec;
 		this->_Reference = nullptr;
-		this->WelcomeFunction = [](int, char*, int) {};
-		this->ResponseFunction = [](int, char*, int) {};
+		this->WelcomeFunction = [](std::shared_ptr<SocketInstance>, char*, int) {};
+		this->ResponseFunction = [](std::shared_ptr<SocketInstance>, char*, int) {};
 	};
-	SocketInstance(const char* Name, SocketWrap* ref) :_Soc(0), _Name(Name), _Reference(ref)
+	SocketInstance(const char* Name, SocketWrap* ref)
 	{
-		_Address = nullptr;
-		_Status = SocketStatus::Created;
-		_SocType = Unspec;
-		this->WelcomeFunction = [](int, char*, int) {};
-		this->ResponseFunction = [](int, char*, int) {};
+		this->_Soc = 0;
+		this->_Reference = ref;
+		this->_Name = Name;
+		this->_Port = nullptr;
+		this->_Address = nullptr;
+		this->_Status = SocketStatus::Created;
+		this->_SocType = Unspec;
+		this->WelcomeFunction = [](std::shared_ptr<SocketInstance>, char*, int) {};
+		this->ResponseFunction = [](std::shared_ptr<SocketInstance>, char*, int) {};
 	};
-	SocketInstance(const char* Name, int socket,SocketWrap* ref) :_Soc(socket), _Name(Name), _Reference(ref)
+	SocketInstance(const SocketInstance& soc)
 	{
-		_Address = nullptr;
-		_Status = SocketStatus::Created;
-		_SocType = Unspec;
-		this->WelcomeFunction = [](int,char*,int) {};
-		this->ResponseFunction = [](int,char*,int) {};
+		this->_Port = soc._Port;
+		this->_Address = soc._Address;
+		this->_Soc = soc._Soc;
+		this->_SocType = soc._SocType;
+		this->_Status = soc._Status;
+		this->WelcomeFunction = soc.WelcomeFunction;
+		this->ResponseFunction = soc.ResponseFunction;
+		this->_Reference = soc._Reference;
+		this->_Name = soc._Name;
+	}
+	SocketInstance(const char* Name, int socket,SocketWrap* ref)
+	{
+		this->_Soc = socket;
+		this->_Name = Name;
+		this->_Reference = ref;
+		this->_Port = nullptr;
+		this->_Address = nullptr;
+		this->_Status = SocketStatus::Created;
+		this->_SocType = Unspec;
+		this->WelcomeFunction = [](std::shared_ptr<SocketInstance>,char*,int) {};
+		this->ResponseFunction = [](std::shared_ptr<SocketInstance>,char*,int) {};
 	};
 	~SocketInstance();
 	//Server things
@@ -106,7 +129,7 @@ public:
 	SOCKET GetSocket();
 	SocketStatus GetStatus();
 	void SetStatus(SocketStatus stat);
-	void BindSocketFunction(std::function<void(int, char*, int)> func, SocketFunctionTypes type);
+	void BindSocketFunction(std::function<void(std::shared_ptr<SocketInstance>, char*, int)> func, SocketFunctionTypes type);
 	void StopListeningThread();
 	void CloseConnection();
 
@@ -123,9 +146,10 @@ private:
 	struct addrinfo* _Address;
 	SocketStatus _Status;
 	SocketType _SocType;
-	std::function<void(int, char*, int)> WelcomeFunction;
-	std::function<void(int, char*, int)> ResponseFunction;
+	std::function<void(std::shared_ptr<SocketInstance>, char*, int)> WelcomeFunction;
+	std::function<void(std::shared_ptr<SocketInstance>, char*, int)> ResponseFunction;
 	std::thread ListeningThread;
+	const char* _Port;
 };
 
 class SocketWrap
