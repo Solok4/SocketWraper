@@ -1,4 +1,3 @@
-#include "pch.h"
 #include "Log.h"
 
 
@@ -11,14 +10,14 @@ Clog::~Clog()
 {
 }
 
-void Clog::PrintLog(LogTag tag,const char* format, ...)
+void Clog::Log(LogTag tag,const char* format, ...)
 {
 
 	char result[2048];
 	char VAContent[2048];
 	switch (tag)
 	{
-	case Log:
+	case Info:
 		strncpy(result, "[Log]: ", 8);
 		break;
 	case Warning:

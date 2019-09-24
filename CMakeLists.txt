@@ -1,0 +1,25 @@
+cmake_minimum_required(VERSION 2.6)
+project(NetworkingTest)
+
+set(CMAKE_CXX_STANDARD 11)
+if(WIN32)
+else()
+set(CMAKE_CCX_COMPILER g++)
+find_package (Threads REQUIRED)
+endif()
+
+if(THREADS_HAVE_PTHREAD_ARG)
+target_compile_options()
+endif()
+
+file(GLOB_RECURSE SRC ${PROJECT_SOURCE_DIR}/NetworkingTest/*.cpp ${PROJECT_SOURCE_DIR}/NetworkingTest/*.h)
+
+add_executable(Test ${SRC})
+include_directories(${LuaTestV2_SOURCE_DIR})
+if(THREADS_HAVE_PTHREAD_ARG)
+target_compile_options(Test PUBLIC "-pthread")
+endif()
+if(WIN32)
+else()
+target_link_libraries(Test ${CMAKE_THREAD_LIBS_INIT})
+endif()

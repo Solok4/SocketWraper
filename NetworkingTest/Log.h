@@ -5,7 +5,7 @@
 
 enum LogTag
 {
-	Log=0,
+	Info=0,
 	Warning,
 	Error,
 };
@@ -15,6 +15,6 @@ class Clog
 public:
 	Clog();
 	~Clog();
-	static void PrintLog(LogTag tag,const char* format, ...);
+	static void Log(LogTag tag,const char* format, ...);
 };
 

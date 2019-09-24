@@ -11,7 +11,19 @@
 #include <thread>
 #include <future>
 
-#ifdef _WIN32
+#ifndef _WIN32
+typedef int SOCKET;
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/ip.h>
+#include <sys/types.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+#define INVALID_SOCKET (int)(~0)
+#define SOCKET_ERROR -1
+#define SD_SEND 0x01
+#endif // !_WIN32
+
 struct SocketCombo
 {
 	SOCKET soc;
@@ -25,7 +37,7 @@ struct MySocket
 	sockaddr_in MainSocket,RecieveSocket;
 	std::function<void(int, char*, int)> ResponseFunction = [](int, char*, int) {};
 	std::function<void(int, char*, int)> WelcomeFunction = [](int, char*, int) {};
-	std::atomic<bool> Close = false;
+	std::atomic<bool> Close;
 	SocketCombo ChildSockets[8];
 };
 
@@ -35,7 +47,6 @@ struct ThreadSocket
 	std::thread thr;
 	const char* name;
 };
-#endif
 
 enum SocketType
 {
@@ -75,17 +86,10 @@ public:
 		this->WelcomeFunction = [](std::shared_ptr<SocketInstance>, char*, int) {};
 		this->ResponseFunction = [](std::shared_ptr<SocketInstance>, char*, int) {};
 	};
-	SocketInstance(const char* Name, SocketWrap* ref)
+	SocketInstance(const char* Name, SocketWrap* ref) :SocketInstance()
 	{
-		this->_Soc = 0;
 		this->_Reference = ref;
 		this->_Name = Name;
-		this->_Port = nullptr;
-		this->_Address = nullptr;
-		this->_Status = SocketStatus::Created;
-		this->_SocType = Unspec;
-		this->WelcomeFunction = [](std::shared_ptr<SocketInstance>, char*, int) {};
-		this->ResponseFunction = [](std::shared_ptr<SocketInstance>, char*, int) {};
 	};
 	SocketInstance(const SocketInstance& soc)
 	{
@@ -97,19 +101,13 @@ public:
 		this->WelcomeFunction = soc.WelcomeFunction;
 		this->ResponseFunction = soc.ResponseFunction;
 		this->_Reference = soc._Reference;
-		this->_Name = soc._Name;
+		char* dest = (char*)malloc(32);
+		strncpy(dest, soc._Name, 32);
+		this->_Name = dest;
 	}
-	SocketInstance(const char* Name, int socket,SocketWrap* ref)
+	SocketInstance(const char* Name, int socket,SocketWrap* ref) :SocketInstance(Name,ref)
 	{
 		this->_Soc = socket;
-		this->_Name = Name;
-		this->_Reference = ref;
-		this->_Port = nullptr;
-		this->_Address = nullptr;
-		this->_Status = SocketStatus::Created;
-		this->_SocType = Unspec;
-		this->WelcomeFunction = [](std::shared_ptr<SocketInstance>,char*,int) {};
-		this->ResponseFunction = [](std::shared_ptr<SocketInstance>,char*,int) {};
 	};
 	~SocketInstance();
 	//Server things
@@ -158,51 +156,19 @@ public:
 	SocketWrap();
 	~SocketWrap();
 
+#ifndef _WIN32
+	std::shared_ptr<SocketInstance> CreateSocket(const char* name, int proto);
+#else
 	std::shared_ptr<SocketInstance> CreateSocket(const char* name, IPPROTO proto);
+#endif // !_WIN32
 	std::shared_ptr<SocketInstance> CreateEmptySocket(const char* name);
 	std::shared_ptr<SocketInstance> GetSocketByName(const char* name);
 	void CloseSocket(const char* name);
 
 
 private:
+#ifdef _WIN32
 	WSAData _WsaData;
+#endif // !_WIN32
 	std::vector<std::shared_ptr<SocketInstance>> _Sockets;
 };
-
-//class SocketWrap
-//{
-//public:
-//	SocketWrap();
-//	~SocketWrap();
-//	void Initalize();
-//	// WINDOWS
-//	void CreateSocket(const char* name, int proto);
-//	void ConnectionData(const char* name, const char* ip, int port);
-//	std::shared_ptr<MySocket> GetSocketByName(const char* name);
-//	//CLIENT
-//	void ConnectWin(const char* name);
-//	void CloseConnection(const char*name);
-//	int SendTCP(const char* name,const char* sendBuff);
-//	int SendTCP(int soc, const char* sendBuff);
-//	void CreateListeningClient(const char* SocketName,const char* ThreadName,IPPROTO type);
-//	void ListenClient(std::shared_ptr<MySocket> sock,IPPROTO type);
-//	int RecvTCPServer(const char* name,int index, char* recvBuff);
-//	int SendUDP(const char* name, const char* sendBuff);
-//	//SERVER
-//	void BindSocket(const char* name);
-//	void BindSocketFunction(const char* name,SocketFunctionTypes type, std::function<void(int,char*, int)> fun);
-//	void ListenServer(std::shared_ptr<MySocket> sock, int numberOfClients);
-//
-//	void CreateListeningServerThread(const char* ThreadName, const char* SocketName);
-//	void StopThread(const char* ThreadName);
-//
-//	void CloseSocket(const char* name);
-//	void Shutdown();
-//
-//#ifdef _WIN32
-//	std::vector<std::shared_ptr<MySocket>> _Sockets;
-//	std::vector<std::shared_ptr<ThreadSocket>> _ThreadSockets;
-//	WSAData _WsaData;
-//#endif
-//};
-
