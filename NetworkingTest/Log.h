@@ -1,20 +1,19 @@
 #pragma once
-#include<stdio.h>
-#include<stdarg.h>
-#include<cstring>
+#include <stdio.h>
+#include <stdarg.h>
+#include <cstring>
+#include <mutex>
 
-enum LogTag
-{
-	Info=0,
-	Warning,
-	Error,
-};
-
-class Clog
+class CLog
 {
 public:
-	Clog();
-	~Clog();
-	static void Log(LogTag tag,const char* format, ...);
+	CLog();
+	~CLog();
+
+	static void debug(const char* message, ...);
+	static void info(const char* message, ...);
+	static void error(const char* message, ...);
+private:
+	static void printLocked(const char* format, std::string data);
 };
 

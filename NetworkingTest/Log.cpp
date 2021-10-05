@@ -1,41 +1,52 @@
 #include "Log.h"
 
-
-Clog::Clog()
+CLog::CLog()
 {
 }
 
 
-Clog::~Clog()
+CLog::~CLog()
 {
 }
 
-void Clog::Log(LogTag tag,const char* format, ...)
-{
-
-	char result[2048];
+void CLog::debug(const char* message, ...) {
 	char VAContent[2048];
-	switch (tag)
-	{
-	case Info:
-		strncpy(result, "[Log]: ", 8);
-		break;
-	case Warning:
-		strncpy(result, "[Warning]: ", 12);
-		break;
-	case Error:
-		strncpy(result, "[Error]: ", 10);
-		break;
-	default:
 
-		break;
-	}
+	va_list vl;
+	va_start(vl, message);
+	vsprintf(VAContent, message, vl);
+	std::string finalMessage = "[DEBUG]: ";
+	finalMessage += VAContent;
+	CLog::printLocked("%s\n", finalMessage);
+	va_end(vl);
+}
 
-	va_list list;
-	va_start(list, format);
-	vsprintf(VAContent, format, list);
-	strcat(result, VAContent);
-	printf("%s\n",result);
+void CLog::info(const char* message, ...) {
+	char VAContent[2048];
 
-	va_end(list);
+	va_list vl;
+	va_start(vl, message);
+	vsprintf(VAContent, message, vl);
+	std::string finalMessage = "[INFO]: ";
+	finalMessage += VAContent;
+	CLog::printLocked("%s\n", finalMessage);
+	va_end(vl);
+}
+
+void CLog::error(const char* message, ...){
+	char VAContent[2048];
+
+	va_list vl;
+	va_start(vl, message);
+	vsprintf(VAContent, message, vl);
+	std::string finalMessage = "[ERROR]: ";
+	finalMessage += VAContent;
+	CLog::printLocked("%s\n", finalMessage);
+	va_end(vl);
+}
+
+void CLog::printLocked(const char* format, std::string data){
+	static std::mutex printMutex;
+	std::lock_guard<std::mutex> lockGuard(printMutex);
+	printf(format,data.c_str());
 }

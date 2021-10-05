@@ -4,9 +4,10 @@
 #include <iostream>
 #include "SocketWrap.h"
 #include <fstream>
+#include <thread>
 
 #ifndef _WIN32
-#include <unistd.h>
+	#include <unistd.h>
 #endif
 
 //#include <WinSock2.h>
@@ -20,11 +21,11 @@ void ServerTCP(int sleeptime)
 
 	auto soc = wrap.CreateSocket("Server", IPPROTO_TCP);
 	//soc->SetupClient("www.google.pl", "80");
-	soc->SetupServer("27000");
+	soc->SetupServer(27000);
 
 	std::function<void(std::shared_ptr<SocketInstance>, char*, int)> ListenFunc = [&](std::shared_ptr<SocketInstance> a, char* b, int c)
 	{
-		Clog::Log(LogTag::Info, "%s > recieved :%.*s",a->GetName(), c, b);
+		CLog::info("%s > recieved :%.*s",a->GetName(), c, b);
 	};
 	soc->BindSocketFunction(ListenFunc, SocketFunctionTypes::Response);
 
@@ -34,7 +35,7 @@ void ServerTCP(int sleeptime)
 		a->SendTCPClient((char*)HelloMessage, strlen(HelloMessage));
 	};
 	soc->BindSocketFunction(WelcomeFunc, SocketFunctionTypes::Welcome);
-	soc->CreateListeningThread(16);
+	soc->CreateListeningThread(std::thread::hardware_concurrency() >=2 ? std::thread::hardware_concurrency() - 1 : 1);
 	std::this_thread::sleep_for(std::chrono::duration<int, std::milli>(sleeptime));
 	soc->StopListeningThread();
 	soc->CloseConnection();
@@ -45,14 +46,14 @@ void ClientTCP(int sleeptime)
 {
 	SocketWrap wrap;
 	auto soc = wrap.CreateSocket("Client", IPPROTO_TCP);
-	soc->SetupClient("127.0.0.1", "27000");
+	soc->SetupClient("127.0.0.1", 27000);
 	auto recvFunc = [&](std::shared_ptr<SocketInstance> a, char* b, int c)
 	{
-		Clog::Log(LogTag::Info, "%s recieved: %.*s", a->GetName(), c, b);
+		CLog::info("%s recieved: %.*s", a->GetName(), c, b);
 	};
 	soc->BindSocketFunction(recvFunc, SocketFunctionTypes::Response);
 
-	std::this_thread::sleep_for(std::chrono::duration<int,std::milli>(sleeptime%1000));
+	std::this_thread::sleep_for(std::chrono::duration<int,std::milli>(sleeptime/2));
 	soc->ConnectToServer();
 	soc->CreateRecieveThread();
 
@@ -66,7 +67,7 @@ void ClientTCP(int sleeptime)
 int main()
 {
 	std::thread server(ServerTCP,5000);
-	std::thread client1(ClientTCP, 2400);
+	std::thread client1(ClientTCP, 5000);
 	//std::thread client2(ClientTCP, 2300);
 	//std::thread client3(ClientTCP, 2600);
 	//std::thread client4(ClientTCP, 2900);

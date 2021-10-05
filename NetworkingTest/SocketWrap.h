@@ -33,7 +33,7 @@ struct SocketCombo
 struct MySocket
 {
 	SOCKET soc;
-	const char* name;
+	std::string name;
 	sockaddr_in MainSocket,RecieveSocket;
 	std::function<void(int, char*, int)> ResponseFunction = [](int, char*, int) {};
 	std::function<void(int, char*, int)> WelcomeFunction = [](int, char*, int) {};
@@ -45,13 +45,12 @@ struct ThreadSocket
 {
 	std::shared_ptr<MySocket> Socket;
 	std::thread thr;
-	const char* name;
+	std::string name;
 };
 
 enum SocketType
 {
-	Unspec =0,
-	Client,
+	Client = 0,
 	Server
 };
 
@@ -63,7 +62,7 @@ enum SocketFunctionTypes
 
 enum SocketStatus
 {
-	Created=0,
+	Initial=0,
 	HasAddresInfo,
 	Binded,
 	Connected,
@@ -78,15 +77,15 @@ public:
 	{
 		this->_Name = "";
 		this->_Soc = 0;
-		this->_Port = nullptr;
+		this->_Port = 0;
 		this->_Address = nullptr;
-		this->_Status = SocketStatus::Created;
-		this->_SocType = Unspec;
+		this->_Status = SocketStatus::Initial;
+		this->_SocType = SocketType::Client;
 		this->_Reference = nullptr;
 		this->WelcomeFunction = [](std::shared_ptr<SocketInstance>, char*, int) {};
 		this->ResponseFunction = [](std::shared_ptr<SocketInstance>, char*, int) {};
 	};
-	SocketInstance(const char* Name, SocketWrap* ref) :SocketInstance()
+	SocketInstance(std::string Name, SocketWrap* ref) :SocketInstance()
 	{
 		this->_Reference = ref;
 		this->_Name = Name;
@@ -101,21 +100,19 @@ public:
 		this->WelcomeFunction = soc.WelcomeFunction;
 		this->ResponseFunction = soc.ResponseFunction;
 		this->_Reference = soc._Reference;
-		char* dest = (char*)malloc(32);
-		strncpy(dest, soc._Name, 32);
-		this->_Name = dest;
+		this->_Name = std::string(soc._Name);
 	}
-	SocketInstance(const char* Name, int socket,SocketWrap* ref) :SocketInstance(Name,ref)
+	SocketInstance(std::string Name, int socket,SocketWrap* ref) :SocketInstance(Name,ref)
 	{
 		this->_Soc = socket;
 	};
 	~SocketInstance();
 	//Server things
-	void SetupServer(const char* port);
+	void SetupServer(uint32_t port);
 	void CreateListeningThread(int maxClients);
 
 	//Client things
-	void SetupClient(const char* addr,const char* port);
+	void SetupClient(std::string addr,uint32_t port);
 	void ConnectToServer();
 	void SendTCPClient(void* data, size_t size);
 	void RecieveTCPClient(void* dataBuffer, size_t bufferSize);
@@ -123,7 +120,7 @@ public:
 
 
 	//Universal
-	const char* GetName();
+	std::string GetName();
 	SOCKET GetSocket();
 	SocketStatus GetStatus();
 	void SetStatus(SocketStatus stat);
@@ -140,14 +137,14 @@ private:
 	std::atomic<bool> isListening;
 	std::vector<std::shared_ptr<SocketInstance>> ServerSockets;
 	SOCKET _Soc;
-	const char* _Name;
+	std::string _Name;
 	struct addrinfo* _Address;
 	SocketStatus _Status;
 	SocketType _SocType;
 	std::function<void(std::shared_ptr<SocketInstance>, char*, int)> WelcomeFunction;
 	std::function<void(std::shared_ptr<SocketInstance>, char*, int)> ResponseFunction;
 	std::thread ListeningThread;
-	const char* _Port;
+	uint32_t _Port;
 };
 
 class SocketWrap
@@ -157,13 +154,13 @@ public:
 	~SocketWrap();
 
 #ifndef _WIN32
-	std::shared_ptr<SocketInstance> CreateSocket(const char* name, int proto);
+	std::shared_ptr<SocketInstance> CreateSocket(std::string name, int proto);
 #else
-	std::shared_ptr<SocketInstance> CreateSocket(const char* name, IPPROTO proto);
+	std::shared_ptr<SocketInstance> CreateSocket(std::string name, IPPROTO proto);
 #endif // !_WIN32
-	std::shared_ptr<SocketInstance> CreateEmptySocket(const char* name);
-	std::shared_ptr<SocketInstance> GetSocketByName(const char* name);
-	void CloseSocket(const char* name);
+	std::shared_ptr<SocketInstance> CreateEmptySocket(std::string name);
+	std::shared_ptr<SocketInstance> GetSocketByName(std::string name);
+	void CloseSocket(std::string name);
 
 
 private:
